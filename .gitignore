@@ -16,3 +16,6 @@ __pycache__/
 # MCP registration runtime artifacts
 register_mcp.log
 *.bak-*
+
+# built distributables
+*.zip

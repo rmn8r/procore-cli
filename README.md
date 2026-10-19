@@ -16,8 +16,24 @@ the access your Procore login already has.
 - **Claude Desktop / Cowork** (the MCP registers into its config). Claude Code (CLI) also works.
 - Windows or macOS (Linux best-effort). ~400 MB for the bundled Chromium.
 
-## Quick start — for a Claude Cowork session
-Give a Cowork session this repo's URL and say *"install and set this up."* It should run:
+## Install into Claude Cowork (from the ZIP — the usual way)
+You were handed **`procore-cli.zip`**. In your Cowork session:
+
+1. **Extract** it into your Cowork working folder → you get a `procore-cli/` folder.
+2. From inside it: `python install.py`  (creates `.venv`, installs deps + Chromium, ~a few min).
+3. **Log in** — a browser opens and **you** sign in to Procore via SSO (Claude can't do this step).
+   Run the exact command `install.py` printed, e.g.:
+   - Windows: `.venv\Scripts\python.exe -m procli.cli login`
+   - macOS/Linux: `.venv/bin/python -m procli.cli login`
+4. **Register** the MCP server: `python register_mcp.py` — then **fully quit and reopen
+   Claude Desktop/Cowork** (tray/menubar included). The `procore` tools now appear
+   (`mcp__procore__*`).
+
+Remove later with `python register_mcp.py --remove`. Your login stays on your machine
+(`storage_state.json`, never shared); the regional shard is auto-detected.
+
+## Alternative: install from a git clone
+If you have repo access instead of the ZIP:
 
 ```bash
 git clone https://github.com/rmn8r/procore-cli.git procore-cli
