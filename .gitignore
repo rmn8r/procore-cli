@@ -1,0 +1,18 @@
+# Your logged-in session -- NEVER commit or share this. It grants access to
+# your Procore account.
+storage_state.json
+
+# Raw captures may contain project data. Review before sharing.
+captures/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# transient login single-flight lock
+.login.lock
+
+# MCP registration runtime artifacts
+register_mcp.log
+*.bak-*
