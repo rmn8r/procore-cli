@@ -278,15 +278,44 @@ TypeOpt = typer.Option(..., "--type", "-T", help="Correspondence type name or ge
 
 
 @app.command()
-def login(timeout: int = typer.Option(180, help="Seconds to wait for SSO to complete.")):
-    """Open a browser to (re)authenticate; auto-closes once the session is live."""
-    from procli.auth import refresh_session
-    err.print("[yellow]Opening a browser to sign in (SSO is often automatic)...[/yellow]")
+def login(timeout: int = typer.Option(180, help="Seconds to wait for SSO to complete."),
+          fresh: bool = typer.Option(False, "--fresh",
+                                     help="Hard logout + full fresh sign-in: drop the saved session "
+                                          "first so this does NOT short-circuit as a no-op refresh. "
+                                          "Use when a plain login keeps reporting 'refreshed' but "
+                                          "calls still come back 'session expired'.")):
+    """Open a browser to (re)authenticate; auto-closes once the session is live.
+
+    Plain `login` gently refreshes and returns immediately if the session still
+    looks valid. `--fresh` first clears the saved session so a brand-new SSO runs
+    — the way out of a stuck session that refresh keeps declaring healthy."""
+    from procli.auth import refresh_session, clear_session
+    if fresh:
+        had = clear_session()
+        err.print(f"[yellow]Logged out ({'cleared saved session' if had else 'no saved session'}); "
+                  "opening a browser for a fresh sign-in...[/yellow]")
+    else:
+        err.print("[yellow]Opening a browser to sign in (SSO is often automatic)...[/yellow]")
     if refresh_session(timeout_s=timeout):
-        console.print("[green]Session refreshed.[/green]")
+        console.print("[green]Session refreshed." + (" (fresh login)" if fresh else "") + "[/green]")
     else:
         err.print("[red]Session not refreshed (timed out or cancelled).[/red]")
         raise typer.Exit(2)
+
+
+@app.command()
+def logout():
+    """Hard logout: clear the saved Procore session so the next call forces a fresh
+    sign-in. Use this (then `login`) to break out of a stuck session that keeps
+    reporting 'refreshed' while tool calls still fail. Local only — never touches
+    anything in Procore."""
+    from procli.auth import clear_session
+    had = clear_session()
+    if had:
+        console.print("[green]Logged out — saved session cleared. Run `login` (or `login --fresh`) "
+                      "to sign in again.[/green]")
+    else:
+        console.print("[yellow]No saved session to clear. Run `login` to sign in.[/yellow]")
 
 
 @app.command()

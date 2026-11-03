@@ -53,12 +53,15 @@ def _release_login_lock() -> None:
 
 
 def _session_has_project_scope() -> bool:
-    """True only if the freshly saved cookies pass a PROJECT-scoped call.
-    (`/me` and `/companies` keep working after project scope lapses, so they
-    can't be trusted as a liveness check.)"""
+    """True only if the cookies pass a real PROJECT-TOOL call (an RFIs fetch).
+
+    IMPORTANT: `/me`, `/companies`, and even `/companies/{id}/projects` can stay
+    authorized in a tier that OUTLIVES the project-tool endpoints (rfis, submittals,
+    inspections, …). Probing only the projects list gives a FALSE POSITIVE — login
+    reports 'refreshed' while every tool call still 401s. So we probe the deepest
+    tier (an actual `/projects/{id}/rfis` call)."""
     if not STATE_PATH.exists():
         return False
-    # Imported lazily so a stale module-load order can't break capture-only use.
     from procli.client import ProcoreClient
     from procli.session import ProcoreAuthError
 
@@ -67,22 +70,51 @@ def _session_has_project_scope() -> bool:
             comps = c.companies()
             if not comps:
                 return False
-            # Prefer the user's own company if flagged; else just try each until
-            # one answers (a company with no project access raises non-auth).
             ordered = sorted(comps, key=lambda x: 0 if x.get("my_company") else 1)
+            projects_ok = False
             for comp in ordered:
                 try:
-                    c.projects(comp["id"])
-                    return True          # a project-scoped call succeeded
+                    projs = c.projects(comp["id"])
                 except ProcoreAuthError:
-                    return False          # session genuinely not valid yet
+                    return False
                 except Exception:
-                    continue              # permission/other -> try next company
-            return False
+                    continue
+                projects_ok = True
+                if not projs:
+                    continue
+                try:                       # probe the real tool tier
+                    c.rfis(projs[0]["id"], comp["id"], per_page=1)
+                    return True
+                except ProcoreAuthError:
+                    return False           # tools are 401 -> session NOT usable
+                except Exception:
+                    continue               # rfis not available here -> try next
+            return projects_ok             # couldn't confirm rfis anywhere; trust tier-2
     except ProcoreAuthError:
         return False
     except Exception:
         return False
+
+
+def clear_session() -> bool:
+    """Hard logout: drop the saved session so the next login does a FULL fresh SSO
+    (not a no-op refresh). The old state is kept as `storage_state.json.loggedout`
+    in case it's needed. Local file op only — never touches Procore."""
+    had = STATE_PATH.exists()
+    if had:
+        try:
+            STATE_PATH.replace(STATE_PATH.with_name(STATE_PATH.name + ".loggedout"))
+        except Exception:
+            try:
+                STATE_PATH.unlink()
+            except Exception:
+                pass
+    for lock in (LOCK_PATH,):
+        try:
+            lock.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return had
 
 
 def refresh_session(timeout_s: int = 180, headless: bool = False,

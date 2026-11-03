@@ -1,6 +1,8 @@
 # Your logged-in session -- NEVER commit or share this. It grants access to
-# your Procore account.
+# your Procore account. The .loggedout backup left by `logout` holds the same
+# cookies, so ignore it too.
 storage_state.json
+storage_state.json.loggedout
 
 # Raw captures may contain project data. Review before sharing.
 captures/

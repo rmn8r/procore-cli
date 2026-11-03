@@ -207,11 +207,23 @@ TOOLS = [
     _t("login", "Refresh the Procore session. There is ONE shared session behind every "
                 "Procore tool (RFIs, submittals, inspections, observations, reports, …); this "
                 "refreshes it for all of them (opens a browser; SSO is usually automatic, and "
-                "verifies project-scoped access before returning). Use it if a call reports the "
+                "verifies real tool access before returning). Use it if a call reports the "
                 "session expired, then simply retry the original call — no manual `capture` "
-                "step and no separate per-tool login exists.",
-       {"timeout": {**_INT, "description": "seconds to wait for SSO (default 180)"}}, [],
-       {"base": ["login"], "opt": [("timeout", "--timeout", "int")]}),
+                "step and no separate per-tool login exists. IMPORTANT: if a plain login keeps "
+                "saying 'Session refreshed' but calls STILL come back 'session expired', the "
+                "saved session is stuck — call this with fresh=true (a hard logout + brand-new "
+                "sign-in) to break out of it, or call the `logout` tool first.",
+       {"timeout": {**_INT, "description": "seconds to wait for SSO (default 180)"},
+        "fresh": {**_BOOL, "description": "hard logout + full fresh sign-in: clear the saved "
+                  "session first so this cannot short-circuit as a no-op refresh. Use when a "
+                  "normal login reports success but calls still fail."}}, [],
+       {"base": ["login"], "opt": [("timeout", "--timeout", "int"), ("fresh", "--fresh", "bool")]}),
+
+    _t("logout", "Hard logout: clear the saved Procore session so the next call forces a fresh "
+                 "sign-in. Use this (then `login`), or `login` with fresh=true, to break out of a "
+                 "stuck session that keeps reporting 'refreshed' while tool calls still fail with "
+                 "'session expired'. Local only — never deletes or changes anything in Procore.",
+       {}, [], {"base": ["logout"]}),
 
     {**_t("inspections_export",
         "Export inspection line items (one row per checklist item) to a CSV at 'out', in the "
