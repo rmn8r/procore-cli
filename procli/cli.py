@@ -774,8 +774,10 @@ def main():
             err.print(f"[red]Auto-login failed: {ex}[/red]")
             raise SystemExit(2)
         if not refreshed:
-            err.print("[red]Could not refresh the session. "
-                      "Run `python -m procli.capture` manually.[/red]")
+            err.print("[red]Could not refresh the Procore session (the browser SSO "
+                      "didn't complete). Run the `login` tool again (CLI: "
+                      "`python -m procli.cli login`) and finish the sign-in, then retry — "
+                      "that one session covers every Procore tool.[/red]")
             raise SystemExit(2)
         err.print("[green]Signed in — retrying your command.[/green]")
         try:

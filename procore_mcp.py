@@ -204,8 +204,12 @@ TOOLS = [
        {"company": _COMPANY, "project": _PROJECT}, ["company", "project"],
        {"base": ["members"], "opt": [("company", "-c", "val"), ("project", "-p", "val")]}),
 
-    _t("login", "Open a browser to (re)authenticate the Procore session (SSO is usually "
-                "automatic). Use if calls report the session expired.",
+    _t("login", "Refresh the Procore session. There is ONE shared session behind every "
+                "Procore tool (RFIs, submittals, inspections, observations, reports, …); this "
+                "refreshes it for all of them (opens a browser; SSO is usually automatic, and "
+                "verifies project-scoped access before returning). Use it if a call reports the "
+                "session expired, then simply retry the original call — no manual `capture` "
+                "step and no separate per-tool login exists.",
        {"timeout": {**_INT, "description": "seconds to wait for SSO (default 180)"}}, [],
        {"base": ["login"], "opt": [("timeout", "--timeout", "int")]}),
 

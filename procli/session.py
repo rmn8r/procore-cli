@@ -10,7 +10,8 @@ Auth model (reverse-engineered from the capture):
     CSRF). Required for writes (POST/PUT/PATCH/DELETE); GETs work without it.
   * Some endpoints also want a `procore-company-id` header.
 
-If the session has expired, calls return HTTP 401/302 -> re-run `procli.capture`.
+If the session has expired, calls return HTTP 401/302 -> refresh the one shared
+session with the `login` tool / `python -m procli.cli login` (covers all tools).
 """
 
 from __future__ import annotations
@@ -49,7 +50,8 @@ def _detect_base_url(state: dict) -> str:
 
 
 class ProcoreAuthError(RuntimeError):
-    """Session missing or expired; re-run `python -m procli.capture`."""
+    """Session missing or expired; refresh the one shared session with the `login`
+    tool (CLI: `python -m procli.cli login`) — it covers every Procore tool."""
 
 
 class ProcoreSafetyError(RuntimeError):
@@ -67,7 +69,8 @@ class ProcoreSession:
     def __init__(self, state_path: Path = STATE_PATH, base_url: str | None = None):
         if not state_path.exists():
             raise ProcoreAuthError(
-                f"{state_path.name} not found. Run `python -m procli.capture` first."
+                f"{state_path.name} not found. Run the `login` tool "
+                f"(CLI: `python -m procli.cli login`) to sign in first."
             )
         state = json.loads(state_path.read_text(encoding="utf-8"))
         base_url = base_url or _detect_base_url(state)
@@ -130,8 +133,12 @@ class ProcoreSession:
         )
         if redirected_to_login or login_required:
             raise ProcoreAuthError(
-                "Procore session expired (idle timeout). "
-                "Re-run `python -m procli.capture` to refresh it."
+                "Procore session expired. There is ONE shared session behind every "
+                "Procore tool (RFIs, submittals, inspections, observations, …) — "
+                "refresh it by running the `login` tool once (CLI: `python -m procli.cli "
+                "login`); a single browser SSO restores access to all of them. No manual "
+                "`capture` step is needed. (When auto-login is enabled the CLI/MCP does "
+                "this for you and retries automatically.)"
             )
         return resp
 
