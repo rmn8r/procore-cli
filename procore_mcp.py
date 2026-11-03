@@ -20,7 +20,7 @@ import sys, os, json, subprocess
 ROOT = os.path.dirname(os.path.abspath(__file__))   # procore-cli/ (contains procli/)
 PYEXE = sys.executable
 SERVER_NAME = "procore"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 
 
 def log(msg: str) -> None:
