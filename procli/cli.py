@@ -756,6 +756,99 @@ def reports_load_cmd(company: str = CompanyOpt, project: str = ProjectOpt,
         print(json.dumps(j.get("data", j), default=str, indent=2, ensure_ascii=False))
 
 
+download_app = typer.Typer(help="Download attachment/document files locally.", no_args_is_help=True)
+app.add_typer(download_app, name="download")
+
+# Where downloads land by default: <procore-cli>/downloads (accessible to a
+# Cowork session on the same machine). Override with --out or PROCORE_DOWNLOAD_DIR.
+from procli.session import ROOT as _ROOT
+DEFAULT_DL_DIR = os.environ.get("PROCORE_DOWNLOAD_DIR") or str(_ROOT / "downloads")
+DlOutOpt = typer.Option(DEFAULT_DL_DIR, "--out", "-o", help="Output directory (created if needed).")
+
+
+@download_app.command("rfi")
+def download_rfi_cmd(number: str, company: str = CompanyOpt, project: str = ProjectOpt,
+                     out: str = DlOutOpt,
+                     by_id: bool = typer.Option(False, "--by-id",
+                                                help="Treat NUMBER as the internal RFI id.")):
+    """Download every attachment on an RFI (question + responses) to a local folder."""
+    from procli.download import download_rfi
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        if by_id:
+            rfi_id = int(number)
+        else:
+            hit = c.find_rfi_by_number(p["id"], comp["id"], number)
+            if not hit:
+                err.print(f"[red]No RFI {number!r} found on {p.get('name')!r}.[/red]")
+                raise typer.Exit(1)
+            rfi_id = hit["id"]
+        m = download_rfi(c, p["id"], comp["id"], rfi_id, out)
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
+@download_app.command("submittal")
+def download_submittal_cmd(number: str, company: str = CompanyOpt, project: str = ProjectOpt,
+                           out: str = DlOutOpt,
+                           by_id: bool = typer.Option(False, "--by-id",
+                                                      help="Treat NUMBER as the internal submittal id.")):
+    """Download every attachment on a submittal (item + approval log) to a local folder."""
+    from procli.download import download_submittal
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        if by_id:
+            sub_id = int(number)
+        else:
+            hit = c.find_submittal_by_number(p["id"], comp["id"], number)
+            if not hit:
+                err.print(f"[red]No submittal {number!r} found on {p.get('name')!r}.[/red]")
+                raise typer.Exit(1)
+            sub_id = hit["id"]
+        m = download_submittal(c, p["id"], comp["id"], sub_id, out)
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
+@download_app.command("documents")
+def download_documents_cmd(company: str = CompanyOpt, project: str = ProjectOpt,
+                           out: str = DlOutOpt,
+                           folder: str = typer.Option(None, "--folder",
+                                                      help="Only files whose full path contains this substring."),
+                           flat: bool = typer.Option(False, "--flat",
+                                                     help="Dump all files into one folder (don't mirror the tree)."),
+                           limit: int = typer.Option(500, "--limit", help="Max files to download.")):
+    """Download Documents-tool files to a local folder (mirrors the Procore folder tree)."""
+    from procli.download import download_documents
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        m = download_documents(c, p["id"], comp["id"], out, folder=folder, flat=flat,
+                               limit=limit, log=lambda msg: err.print(msg))
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
+@download_app.command("file")
+def download_file_cmd(file_id: int, company: str = CompanyOpt, project: str = ProjectOpt,
+                      out: str = DlOutOpt):
+    """Download one Documents file by its internal file id."""
+    from procli.download import _file_version_url, _stream_download, _dedupe, _safe_name, _manifest
+    from pathlib import Path
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        url, _size = _file_version_url(c, p["id"], comp["id"], file_id)
+        if not url:
+            err.print(f"[red]No downloadable version for file id {file_id}.[/red]")
+            raise typer.Exit(1)
+        j = c.s.get_json(f"/rest/v1.0/files/{file_id}", company_id=comp["id"],
+                         params={"project_id": p["id"], "company_id": comp["id"]})
+        dest = _dedupe(Path(out) / _safe_name(j.get("name") or f"file-{file_id}"))
+        res = _stream_download(c.s, url, dest)
+        print(json.dumps(_manifest(Path(out), [res], {"source": "file", "file_id": file_id}),
+                         default=str, indent=2, ensure_ascii=False))
+
+
 @app.command()
 def surface(company: str = CompanyOpt, project: str = ProjectOpt,
             domain: str = typer.Option(None, "--domain",

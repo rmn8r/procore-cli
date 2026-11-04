@@ -20,7 +20,7 @@ import sys, os, json, subprocess
 ROOT = os.path.dirname(os.path.abspath(__file__))   # procore-cli/ (contains procli/)
 PYEXE = sys.executable
 SERVER_NAME = "procore"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.2.0"
 
 
 def log(msg: str) -> None:
@@ -307,6 +307,63 @@ TOOLS = [
         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("domain", "--domain", "val"),
                 ("status", "--status", "val"), ("romp", "--romp", "val"), ("type", "--type", "val"),
                 ("folder", "--folder", "val"), ("limit", "--limit", "int")]}),
+
+    {**_t("download_rfi",
+        "Download every attachment on an RFI (question + all responses) to local files so "
+        "they can be reviewed. Files land under out/<rfi-number>/. Returns a JSON manifest "
+        "with the absolute path of each downloaded file (read them with your file tools). "
+        "'out' is optional (defaults to the server's downloads/ folder).",
+        {"number": {**_STR, "description": "display number, e.g. 212 or RFI-212"},
+         "company": _COMPANY, "project": _PROJECT,
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"},
+         "by_id": {**_BOOL, "description": "treat number as the internal RFI id"}},
+        ["number", "company", "project"],
+        {"base": ["download", "rfi"], "pos": ["number"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"),
+                 ("out", "--out", "val"), ("by_id", "--by-id", "bool")]}),
+     "timeout_s": 900},
+
+    {**_t("download_submittal",
+        "Download every attachment on a submittal (the item plus its approval log) to local "
+        "files. Files land under out/<submittal-number>/. Returns a JSON manifest with the "
+        "absolute path of each file. 'out' is optional (defaults to the server's downloads/ folder).",
+        {"number": {**_STR, "description": "display number, e.g. 323119.53-1"},
+         "company": _COMPANY, "project": _PROJECT,
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"},
+         "by_id": {**_BOOL, "description": "treat number as the internal submittal id"}},
+        ["number", "company", "project"],
+        {"base": ["download", "submittal"], "pos": ["number"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"),
+                 ("out", "--out", "val"), ("by_id", "--by-id", "bool")]}),
+     "timeout_s": 900},
+
+    {**_t("download_documents",
+        "Download files from the project's Documents tool to local files, mirroring the Procore "
+        "folder tree (set flat=true to dump them into one folder). Use 'folder' to download only "
+        "a folder/subtree (case-insensitive match on the full path) — strongly recommended, since "
+        "without it EVERY file in the project is in scope (capped by 'limit', default 500). Returns "
+        "a JSON manifest with the absolute path of each file. Large pulls take several minutes.",
+        {"company": _COMPANY, "project": _PROJECT,
+         "folder": {**_STR, "description": "only files whose full path contains this (e.g. 'Submittals/Electrical')"},
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"},
+         "flat": {**_BOOL, "description": "dump all files into one folder instead of mirroring the tree"},
+         "limit": {**_INT, "description": "max files to download (default 500)"}},
+        ["company", "project"],
+        {"base": ["download", "documents"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("folder", "--folder", "val"),
+                 ("out", "--out", "val"), ("flat", "--flat", "bool"), ("limit", "--limit", "int")]}),
+     "timeout_s": 1800},
+
+    {**_t("download_file",
+        "Download one Documents file by its internal file id (from the surface/documents roster) "
+        "to a local file. Returns a JSON manifest with the absolute path.",
+        {"file_id": {**_INT, "description": "internal document file id"},
+         "company": _COMPANY, "project": _PROJECT,
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"}},
+        ["file_id", "company", "project"],
+        {"base": ["download", "file"], "pos": ["file_id"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("out", "--out", "val")]}),
+     "timeout_s": 600},
 
     _t("raw", "Escape hatch: call any Procore internal REST endpoint. method e.g. GET, "
               "path e.g. /rest/v1.0/me, params as ['key=value', ...]. JSON.",

@@ -7,6 +7,9 @@ storage_state.json.loggedout
 # Raw captures may contain project data. Review before sharing.
 captures/
 
+# Downloaded RFI/submittal/document files (project data) — never commit.
+downloads/
+
 # Python
 .venv/
 __pycache__/
