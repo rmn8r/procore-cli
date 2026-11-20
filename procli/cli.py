@@ -670,16 +670,30 @@ def inspections_export(
 def inspections_list(company: str = CompanyOpt, project: str = ProjectOpt, table: bool = TableOpt,
                      types: str = typer.Option("Commissioning,Quality", "--types",
                                                help="Comma-separated inspection types (blank = all)."),
-                     romp: str = typer.Option(None, "--romp", help="Filter to one ROMP, e.g. ROMP01.")):
+                     romp: str = typer.Option(None, "--romp", help="Filter to one ROMP, e.g. ROMP01."),
+                     equipment: str = typer.Option(None, "--equipment",
+                                                   help="Filter to one equipment tag, e.g. USB-1.1A.")):
     """Per-inspection completion rollup (fast; from checklist/lists)."""
     from procli.inspections import list_rollup
     with _client() as c:
         comp = _resolve_company(c, company)
         p = _resolve_project(c, comp["id"], project)
         tset = tuple(t.strip() for t in types.split(",") if t.strip()) if types else None
-        data = list_rollup(c, p["id"], comp["id"], types=tset, romp=romp)
+        data = list_rollup(c, p["id"], comp["id"], types=tset, romp=romp, equipment=equipment)
         _emit(data, table, ["id", "name", "type", "equipment", "romp", "respondable",
                             "answered", "deficient", "pct_complete"])
+
+
+@inspections_app.command("attachments")
+def inspections_attachments(list_id: int, company: str = CompanyOpt, project: str = ProjectOpt):
+    """List (don't download) every attachment on an inspection, mapped to its checklist
+    line, with each file's signed download link. Manual-scour fallback for picking files."""
+    from procli.download import list_inspection_attachments
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        print(json.dumps(list_inspection_attachments(c, p["id"], comp["id"], list_id),
+                         default=str, indent=2, ensure_ascii=False))
 
 
 reports_app = typer.Typer(help="Enhanced Reports (360) tools.", no_args_is_help=True)
@@ -759,11 +773,14 @@ def reports_load_cmd(company: str = CompanyOpt, project: str = ProjectOpt,
 download_app = typer.Typer(help="Download attachment/document files locally.", no_args_is_help=True)
 app.add_typer(download_app, name="download")
 
-# Where downloads land by default: <procore-cli>/downloads (accessible to a
-# Cowork session on the same machine). Override with --out or PROCORE_DOWNLOAD_DIR.
-from procli.session import ROOT as _ROOT
-DEFAULT_DL_DIR = os.environ.get("PROCORE_DOWNLOAD_DIR") or str(_ROOT / "downloads")
-DlOutOpt = typer.Option(DEFAULT_DL_DIR, "--out", "-o", help="Output directory (created if needed).")
+# Where downloads land by default: the user's Downloads folder, in a `procore`
+# subfolder (easy to find, keeps Procore pulls tidy, readable by a Cowork session
+# on the same machine). Override per-call with --out, or globally with
+# PROCORE_DOWNLOAD_DIR.
+DEFAULT_DL_DIR = (os.environ.get("PROCORE_DOWNLOAD_DIR")
+                  or os.path.join(os.path.expanduser("~"), "Downloads", "procore"))
+DlOutOpt = typer.Option(DEFAULT_DL_DIR, "--out", "-o",
+                        help="Output directory (created if needed). Default: ~/Downloads/procore.")
 
 
 @download_app.command("rfi")
@@ -830,13 +847,55 @@ def download_documents_cmd(company: str = CompanyOpt, project: str = ProjectOpt,
 
 @download_app.command("inspection")
 def download_inspection_cmd(list_id: int, company: str = CompanyOpt, project: str = ProjectOpt,
-                            out: str = DlOutOpt):
-    """Download the attachments on one inspection/checklist (by its list id) to a local folder."""
+                            out: str = DlOutOpt,
+                            docs_only: bool = typer.Option(False, "--docs-only",
+                                                           help="Skip evidence photos; download only documents (test reports).")):
+    """Download attachments on one inspection/checklist (by list id), organized by checklist line."""
     from procli.download import download_inspection
     with _client() as c:
         comp = _resolve_company(c, company)
         p = _resolve_project(c, comp["id"], project)
-        m = download_inspection(c, p["id"], comp["id"], list_id, out)
+        m = download_inspection(c, p["id"], comp["id"], list_id, out, docs_only=docs_only)
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
+@download_app.command("equipment")
+def download_equipment_cmd(equipment: str, company: str = CompanyOpt, project: str = ProjectOpt,
+                           out: str = DlOutOpt,
+                           types: str = typer.Option(None, "--types",
+                                                     help="Restrict to inspection types, e.g. 'Commissioning,Quality'."),
+                           include_photos: bool = typer.Option(False, "--include-photos",
+                                                               help="Also download evidence photos (default: test reports/documents only).")):
+    """Download the test reports from every checklist for a piece of equipment (e.g. USB-1.1A)."""
+    from procli.download import download_equipment
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        tset = tuple(t.strip() for t in types.split(",") if t.strip()) if types else None
+        m = download_equipment(c, p["id"], comp["id"], equipment, out, types=tset,
+                               docs_only=not include_photos, log=lambda msg: err.print(msg))
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
+@download_app.command("observation")
+def download_observation_cmd(number: str, company: str = CompanyOpt, project: str = ProjectOpt,
+                            out: str = DlOutOpt,
+                            by_id: bool = typer.Option(False, "--by-id",
+                                                       help="Treat NUMBER as the internal observation id.")):
+    """Download every attachment/photo on an observation (by display number) to a local folder."""
+    from procli.download import download_observation
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        if by_id:
+            oid = int(number)
+        else:
+            hit = c.find_observation_by_number(p["id"], comp["id"], number)
+            if not hit:
+                err.print(f"[red]No observation #{number} on {p.get('name')!r}.[/red]")
+                raise typer.Exit(1)
+            oid = hit["id"]
+        m = download_observation(c, p["id"], comp["id"], oid, out)
         print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
 
 

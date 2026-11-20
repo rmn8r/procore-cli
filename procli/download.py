@@ -26,6 +26,15 @@ DEFAULT_MAX_FILES = 500
 DEFAULT_MAX_MB = 1024          # skip any single file larger than this
 _FAS_MARK = "/fas/"            # marks a Procore File-Access-Service download URL
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+# Image/evidence-photo extensions — skipped when a caller wants test reports only.
+_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".bmp",
+              ".tif", ".tiff", ".svg"}
+
+
+def _is_image(name: str, content_type: str | None = None) -> bool:
+    if content_type and str(content_type).lower().startswith("image/"):
+        return True
+    return Path(name or "").suffix.lower() in _IMAGE_EXT
 
 
 def _safe_name(name: str, fallback: str = "file") -> str:
@@ -103,7 +112,7 @@ def _harvest_attachments(obj, _seen: set | None = None) -> list[dict]:
             nm = o.get("filename") or o.get("name")
             if isinstance(url, str) and _FAS_MARK in url and nm and url not in _seen:
                 _seen.add(url)
-                out.append({"url": url, "name": str(nm)})
+                out.append({"url": url, "name": str(nm), "content_type": o.get("content_type")})
             for v in o.values():
                 walk(v)
         elif isinstance(o, list):
@@ -266,21 +275,204 @@ def download_url(client, url: str, out_dir: str | Path, *, name: str | None = No
 
 def download_inspection(client, project_id: int, company_id: int, list_id: int,
                         out_dir: str | Path, *, label: str | None = None,
-                        max_mb: int = DEFAULT_MAX_MB) -> dict:
-    """Download the attachments on one inspection (checklist list) into
-    out_dir/<label>/. Pulls the inspection detail and downloads every file-level
-    attachment it carries. (Inspection-level attachments live here; for a photo or
-    attachment on a specific response, hand its download link to download_url.)"""
-    data = client.checklist_list(project_id, company_id, list_id)
+                        docs_only: bool = False, max_mb: int = DEFAULT_MAX_MB) -> dict:
+    """Download ALL files on one inspection (checklist list), organized to mirror the
+    checklist: each item-level file/evidence photo lands under
+    <label>/<section>/<item# item-name>/, inspection-level attachments under
+    <label>/_inspection/. Signed links are resolved automatically. The manifest's
+    `by_line` maps every downloaded file back to the checklist line it belongs to, so a
+    reviewer can see which attachment answers which item. Set docs_only=True to skip
+    evidence photos and pull just the documents (test reports)."""
+    detail = client.checklist_list(project_id, company_id, list_id)
+    ident = detail.get("identifier") or detail.get("number") or list_id
+    nm = detail.get("list_template_name") or detail.get("name") or "inspection"
+    # list_id keeps two inspections that share an identifier (e.g. both "#2") apart.
+    label = label or _safe_name(f"{nm} {ident} [{list_id}]")
+    dest_dir = Path(out_dir) / _safe_name(label)
+
+    # Line maps: item_id -> {number,name,section_id}; section_id -> section name.
+    try:
+        imap = {it.get("id"): it for it in client.checklist_items(project_id, company_id, list_id)}
+    except Exception:
+        imap = {}
+    try:
+        secs = {s.get("id"): s.get("name")
+                for s in client.checklist_sections(project_id, company_id, list_id)}
+    except Exception:
+        secs = {}
+
+    seen: set = set()
+    jobs = []  # (att, line_info, subdir)
+
+    # Inspection-level attachments (attached to the inspection, not a line).
+    for a in _harvest_attachments(detail, seen):
+        if docs_only and _is_image(a["name"], a.get("content_type")):
+            continue
+        jobs.append((a, {"scope": "inspection", "section": None, "item_number": None,
+                         "item_name": None, "item_id": None}, Path("_inspection")))
+
+    # Item-level files + evidence photos, each tagged with its checklist line.
+    try:
+        recs = client.checklist_item_attachments(project_id, company_id, list_id)
+    except Exception:
+        recs = []
+    for rec in recs:
+        att = rec.get("attachment") or {}
+        url = att.get("url")
+        name = att.get("filename") or att.get("name")
+        if not (isinstance(url, str) and _FAS_MARK in url and name) or url in seen:
+            continue
+        if docs_only and _is_image(name, att.get("content_type")):
+            seen.add(url)
+            continue
+        seen.add(url)
+        iid = rec.get("item_id")
+        it = imap.get(iid) or {}
+        section = secs.get(it.get("section_id")) or "Unsectioned"
+        num = it.get("number")
+        iname = it.get("name") or ""
+        line_folder = _safe_name(f"{num} {iname}".strip()) if (num or iname) else f"item-{iid}"
+        subdir = _safe_relpath(f"{section}/{line_folder}")
+        jobs.append(({"url": url, "name": name},
+                     {"scope": "item", "section": section, "item_number": num,
+                      "item_name": iname, "item_id": iid}, subdir))
+
+    # Download, grouping results by checklist line.
+    results = []
+    lines: dict = {}
+    for a, info, subdir in jobs:
+        dest = _dedupe(dest_dir / subdir / _safe_name(a["name"]))
+        res = _stream_download(client.s, a["url"], dest, max_mb=max_mb)
+        results.append(res)
+        key = info["item_id"] or "_inspection"
+        ln = lines.setdefault(key, {k: info[k] for k in
+                                    ("scope", "section", "item_number", "item_name", "item_id")}
+                              | {"files": []})
+        if res.get("ok"):
+            ln["files"].append({"name": Path(res["path"]).name,
+                                "path": str(Path(res["path"]).resolve()),
+                                "bytes": res.get("bytes")})
+
+    return _manifest(dest_dir, results,
+                     {"source": "inspection", "inspection_id": list_id, "name": nm,
+                      "identifier": ident,
+                      "lines_with_attachments": sum(1 for k in lines if k != "_inspection"),
+                      "by_line": list(lines.values())})
+
+
+def download_equipment(client, project_id: int, company_id: int, equipment: str,
+                       out_dir: str | Path, *, types=None, docs_only: bool = True,
+                       max_mb: int = DEFAULT_MAX_MB, log=lambda m: None) -> dict:
+    """Find every inspection/checklist for a piece of equipment (by its tag, e.g.
+    'USB-1.1A') and download their attachments — organized per checklist and per
+    checklist line — under out_dir/equipment-<tag>/. Defaults to docs_only=True so it
+    pulls the TEST REPORTS (NETA, torque, test forms) and skips evidence photos; pass
+    docs_only=False to include photos too. Optionally restrict to inspection types
+    (e.g. ['Commissioning','Quality'] for Cx/QC). Returns a combined manifest."""
+    from procli.inspections import (_cf_value, CF_EQUIPMENT, _type_name,
+                                    parse_equipment_romp, equipment_matches)
+    types_lc = {t.lower() for t in types} if types else None
+    matched = []
+    for l in client.inspection_lists(project_id, company_id):
+        if types_lc and _type_name(l).lower() not in types_lc:
+            continue
+        cf = l.get("custom_fields") or {}
+        eq = _cf_value(cf, CF_EQUIPMENT)
+        if not eq:
+            eq = parse_equipment_romp(l.get("description"), l.get("list_template_name"))[0]
+        if eq and equipment_matches(equipment, eq):
+            matched.append((l, eq))
+
+    base = Path(out_dir) / _safe_name(f"equipment-{equipment}")
+    checklists = []
+    totals = {"downloaded": 0, "failed": 0, "total_bytes": 0}
+    for l, eq in matched:
+        log(f"[equipment] {l.get('id')} {l.get('list_template_name') or l.get('name')} ({_type_name(l)})")
+        m = download_inspection(client, project_id, company_id, l["id"], base,
+                                docs_only=docs_only, max_mb=max_mb)
+        checklists.append({"inspection_id": l["id"], "name": m.get("name"),
+                           "type": _type_name(l), "equipment": eq,
+                           "downloaded": m["downloaded"], "failed": m["failed"],
+                           "total_bytes": m["total_bytes"], "out_dir": m["out_dir"]})
+        for k in totals:
+            totals[k] += m.get(k, 0)
+
+    return {"source": "equipment", "equipment": equipment,
+            "out_dir": str(base.resolve()), "docs_only": docs_only,
+            "matched_checklists": len(matched),
+            "types": sorted({_type_name(l) for l, _ in matched}),
+            **totals, "checklists": checklists}
+
+
+def list_inspection_attachments(client, project_id: int, company_id: int, list_id: int) -> dict:
+    """List (do NOT download) every attachment on an inspection, mapped to its checklist
+    line, with each file's name, type, and signed download url. The manual-scour fallback:
+    when the automated equipment→checklist→download path misses, a reviewer can see exactly
+    what is attached where and pull specific files with download_url."""
+    detail = client.checklist_list(project_id, company_id, list_id)
+    try:
+        imap = {it.get("id"): it for it in client.checklist_items(project_id, company_id, list_id)}
+    except Exception:
+        imap = {}
+    try:
+        secs = {s.get("id"): s.get("name")
+                for s in client.checklist_sections(project_id, company_id, list_id)}
+    except Exception:
+        secs = {}
+
+    seen: set = set()
+    lines: dict = {}
+
+    def add(info, name, content_type, url):
+        key = info["item_id"] or "_inspection"
+        ln = lines.setdefault(key, {**info, "files": []})
+        ln["files"].append({"name": name, "content_type": content_type,
+                            "is_image": _is_image(name, content_type), "url": url})
+
+    for a in _harvest_attachments(detail, seen):
+        add({"scope": "inspection", "section": None, "item_number": None,
+             "item_name": None, "item_id": None}, a["name"], a.get("content_type"), a["url"])
+    try:
+        recs = client.checklist_item_attachments(project_id, company_id, list_id)
+    except Exception:
+        recs = []
+    for rec in recs:
+        att = rec.get("attachment") or {}
+        url = att.get("url")
+        name = att.get("filename") or att.get("name")
+        if not (isinstance(url, str) and _FAS_MARK in url and name) or url in seen:
+            continue
+        seen.add(url)
+        iid = rec.get("item_id")
+        it = imap.get(iid) or {}
+        add({"scope": "item", "section": secs.get(it.get("section_id")) or "Unsectioned",
+             "item_number": it.get("number"), "item_name": it.get("name") or "",
+             "item_id": iid}, name, att.get("content_type"), url)
+
+    total = sum(len(l["files"]) for l in lines.values())
+    return {"source": "inspection_attachments", "inspection_id": list_id,
+            "name": detail.get("list_template_name") or detail.get("name"),
+            "identifier": detail.get("identifier") or detail.get("number") or list_id,
+            "total_attachments": total,
+            "lines_with_attachments": sum(1 for k in lines if k != "_inspection"),
+            "by_line": list(lines.values())}
+
+
+def download_observation(client, project_id: int, company_id: int, observation_id: int,
+                         out_dir: str | Path, *, label: str | None = None,
+                         max_mb: int = DEFAULT_MAX_MB) -> dict:
+    """Download every attachment/photo on one observation into out_dir/<label>/.
+    The observation detail embeds its attachments[] with signed links directly."""
+    data = client.observation(observation_id, project_id, company_id)
     atts = _harvest_attachments(data)
-    ident = data.get("identifier") or data.get("number") or list_id
-    label = label or f"inspection-{_safe_name(str(ident))}"
+    num = data.get("number") or observation_id
+    label = label or f"observation-{_safe_name(str(num))}"
     dest_dir = Path(out_dir) / _safe_name(label)
     results = []
     for a in atts:
         dest = _dedupe(dest_dir / _safe_name(a["name"]))
         results.append(_stream_download(client.s, a["url"], dest, max_mb=max_mb))
     return _manifest(dest_dir, results,
-                     {"source": "inspection", "inspection_id": list_id,
-                      "name": data.get("list_template_name") or data.get("name"),
-                      "identifier": ident, "attachments_found": len(atts)})
+                     {"source": "observation", "observation_id": observation_id,
+                      "number": num, "name": data.get("name"),
+                      "attachments_found": len(atts)})

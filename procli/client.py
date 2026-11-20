@@ -321,6 +321,19 @@ class ProcoreClient:
                                company_id=company_id,
                                params={"project_id": project_id, "company_id": company_id})
 
+    def checklist_item_attachments(self, project_id: int, company_id: int, list_id: int) -> list[dict]:
+        """All ITEM-level attachments + photos for an inspection, each wrapping an
+        `attachment` with a signed FAS `url`. This is the endpoint the web app hits
+        when an item is opened (filterable by item_id; filtering by list_id returns
+        the whole list in one call). The list detail only carries list-level
+        attachments, so this is needed for evidence photos / per-item files."""
+        data = self.s.get_json(
+            f"/rest/v1.0/projects/{project_id}/checklist/list_item_attachments",
+            company_id=company_id,
+            params={"filters[list_id]": list_id, "view": "flat_v2"},
+        )
+        return data if isinstance(data, list) else (data.get("data") or [])
+
     def checklist_sections(self, project_id: int, company_id: int, list_id: int) -> list[dict]:
         return self.s.get_json(f"/rest/v1.1/projects/{project_id}/checklist/list_sections",
                                company_id=company_id, params={"filters[list_id]": list_id})

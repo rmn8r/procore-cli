@@ -65,6 +65,21 @@ def parse_equipment_romp(description: str, template: str) -> tuple[str | None, s
     return (eq, romp)
 
 
+def _norm_tokens(s) -> set:
+    """Lowercase alphanumeric tokens, split on any separator. 'USB-XFMR-1.1A' ->
+    {'usb','xfmr','1','1a'}."""
+    import re as _re
+    return {t for t in _re.split(r"[^a-z0-9]+", str(s or "").lower()) if t}
+
+
+def equipment_matches(query: str, equip: str) -> bool:
+    """True if every token of `query` appears in `equip` (token-subset, separator- and
+    case-insensitive). So 'USB-1.1A' matches 'USB 1.1A', 'USB-XFMR-1.1A' and
+    'SK.01A-USB 1.1A', but NOT 'USB-XFMR-1.1B' or 'USB-XFMR-11.1A'."""
+    q = _norm_tokens(query)
+    return bool(q) and q.issubset(_norm_tokens(equip))
+
+
 def _type_name(lst: dict) -> str:
     t = lst.get("inspection_type")
     return (t or {}).get("name") if isinstance(t, dict) else (t or "")
@@ -76,10 +91,12 @@ def _loc_name(lst: dict) -> str:
 
 
 def list_rollup(client, project_id: int, company_id: int, *,
-                types=DEFAULT_TYPES, romp: str | None = None) -> list[dict]:
+                types=DEFAULT_TYPES, romp: str | None = None,
+                equipment: str | None = None) -> list[dict]:
     """Per-inspection completion rollup (one row per inspection) from the REST
     `checklist/lists` sweep — id, name, type, Equipment, ROMP, location, and the
-    respondable/answered/conforming/deficient/N-A counts + % complete."""
+    respondable/answered/conforming/deficient/N-A counts + % complete. Filter by
+    type, ROMP, and/or equipment tag."""
     types_lc = {t.lower() for t in types} if types else None
     rows = []
     for l in client.inspection_lists(project_id, company_id):
@@ -93,6 +110,8 @@ def list_rollup(client, project_id: int, company_id: int, *,
             eq = eq or peq
             rp = rp or prp
         if romp and romp.upper() not in (rp or "").upper():
+            continue
+        if equipment and not equipment_matches(equipment, eq):
             continue
         respondable = l.get("respondable_item_count") or 0
         answered = l.get("inspected_item_count") or 0

@@ -20,7 +20,7 @@ import sys, os, json, subprocess
 ROOT = os.path.dirname(os.path.abspath(__file__))   # procore-cli/ (contains procli/)
 PYEXE = sys.executable
 SERVER_NAME = "procore"
-SERVER_VERSION = "1.3.0"
+SERVER_VERSION = "1.5.0"
 
 
 def log(msg: str) -> None:
@@ -245,14 +245,30 @@ TOOLS = [
 
     _t("inspections_list",
        "Per-inspection completion rollup (fast): one row per inspection with id, name, type, "
-       "Equipment, ROMP, location, respondable/answered/deficient counts, % complete. JSON.",
+       "Equipment, ROMP, location, respondable/answered/deficient counts, % complete. Filter by "
+       "type/ROMP/equipment — use the equipment filter to find every checklist for a piece of "
+       "equipment (e.g. 'USB-1.1A'), then download its test reports with download_equipment. JSON.",
        {"company": _COMPANY, "project": _PROJECT,
         "types": {**_STR, "description": "comma-separated inspection types (default 'Commissioning,Quality')"},
-        "romp": {**_STR, "description": "filter to one ROMP, e.g. ROMP01"}},
+        "romp": {**_STR, "description": "filter to one ROMP, e.g. ROMP01"},
+        "equipment": {**_STR, "description": "filter to one equipment tag, e.g. USB-1.1A"}},
        ["company", "project"],
        {"base": ["inspections", "list"],
         "opt": [("company", "-c", "val"), ("project", "-p", "val"),
-                ("types", "--types", "val"), ("romp", "--romp", "val")]}),
+                ("types", "--types", "val"), ("romp", "--romp", "val"),
+                ("equipment", "--equipment", "val")]}),
+
+    _t("inspection_attachments",
+       "List (do NOT download) every attachment on an inspection/checklist (by list id), mapped to its "
+       "checklist line, with each file's name, type, and signed download url. The manual-scour FALLBACK: "
+       "when download_equipment / automated finding misses, use surface or inspections_list to find "
+       "candidate checklists, call this to see exactly what's attached to each line, then pull specific "
+       "files with download_url. JSON.",
+       {"list_id": {**_INT, "description": "inspection (checklist list) id"},
+        "company": _COMPANY, "project": _PROJECT},
+       ["list_id", "company", "project"],
+       {"base": ["inspections", "attachments"], "pos": ["list_id"],
+        "opt": [("company", "-c", "val"), ("project", "-p", "val")]}),
 
     _t("reports_list", "List the project's saved 360 reports (mine / shared / templates). JSON.",
        {"company": _COMPANY, "project": _PROJECT}, ["company", "project"],
@@ -366,17 +382,53 @@ TOOLS = [
      "timeout_s": 600},
 
     {**_t("download_inspection",
-        "Download the attachments on one inspection/checklist (by its list id, from the "
-        "inspections_list / surface roster) to local files, under out/<inspection-id>/. Returns a "
-        "JSON manifest with the absolute path of each file. NOTE: this covers inspection-level "
-        "attachments; for a photo or file on a specific checklist response, use download_url with "
-        "that file's download link.",
+        "Download files on one inspection/checklist (by its list id, from inspections_list / surface) "
+        "to local files, ORGANIZED TO MIRROR THE CHECKLIST: each item-level file/photo lands under "
+        "<inspection>/<section>/<item# item-name>/, inspection-level attachments under _inspection/. "
+        "Signed links are resolved automatically. The manifest's `by_line` maps every file back to the "
+        "checklist line it answers. Set docs_only=true to get just the documents/test reports (skip "
+        "evidence photos).",
         {"list_id": {**_INT, "description": "inspection (checklist list) id"},
          "company": _COMPANY, "project": _PROJECT,
-         "out": {**_STR, "description": "output directory (optional; default downloads/)"}},
+         "out": {**_STR, "description": "output directory (optional; default ~/Downloads/procore)"},
+         "docs_only": {**_BOOL, "description": "skip evidence photos; download only documents/test reports"}},
         ["list_id", "company", "project"],
         {"base": ["download", "inspection"], "pos": ["list_id"],
-         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("out", "--out", "val")]}),
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("out", "--out", "val"),
+                 ("docs_only", "--docs-only", "bool")]}),
+     "timeout_s": 1800},
+
+    {**_t("download_equipment",
+        "Review-by-equipment workflow: find EVERY inspection/checklist for a piece of equipment (by its "
+        "tag, e.g. 'USB-1.1A' — matches 'USB 1.1A', 'USB-XFMR-1.1A', etc.) and download their test "
+        "reports to out/equipment-<tag>/<checklist>/<section>/<item>/. Defaults to the documents/test "
+        "reports only (NETA, torque, test forms) and skips evidence photos; set include_photos=true for "
+        "everything. Optionally restrict to types like 'Commissioning,Quality' (Cx/QC). Signed links are "
+        "resolved automatically. Returns a combined manifest (per-checklist counts + out paths) so you "
+        "can then read and review the downloaded reports.",
+        {"equipment": {**_STR, "description": "equipment tag, e.g. USB-1.1A"},
+         "company": _COMPANY, "project": _PROJECT,
+         "types": {**_STR, "description": "restrict to inspection types, e.g. 'Commissioning,Quality' (optional)"},
+         "include_photos": {**_BOOL, "description": "also download evidence photos (default: test reports/documents only)"},
+         "out": {**_STR, "description": "output directory (optional; default ~/Downloads/procore)"}},
+        ["equipment", "company", "project"],
+        {"base": ["download", "equipment"], "pos": ["equipment"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("types", "--types", "val"),
+                 ("include_photos", "--include-photos", "bool"), ("out", "--out", "val")]}),
+     "timeout_s": 1800},
+
+    {**_t("download_observation",
+        "Download every attachment/photo on one observation (by display number, or internal id with "
+        "by_id) to local files under out/<observation-number>/. The signed links are resolved "
+        "automatically. Returns a JSON manifest with the absolute path of each file.",
+        {"number": {**_STR, "description": "observation display number (or internal id with by_id)"},
+         "company": _COMPANY, "project": _PROJECT,
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"},
+         "by_id": {**_BOOL, "description": "treat number as the internal observation id"}},
+        ["number", "company", "project"],
+        {"base": ["download", "observation"], "pos": ["number"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"),
+                 ("out", "--out", "val"), ("by_id", "--by-id", "bool")]}),
      "timeout_s": 900},
 
     {**_t("download_url",
