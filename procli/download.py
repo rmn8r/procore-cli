@@ -239,3 +239,48 @@ def download_documents(client, project_id: int, company_id: int, out_dir: str | 
         extra["note"] = (f"{total_matched} files matched; only the first {limit} were "
                          f"downloaded. Narrow with folder=... or raise limit.")
     return _manifest(out_dir, results, extra)
+
+
+def _name_from_url(url: str) -> str:
+    """Best-effort filename from a FAS/S3 url (used when no name is supplied)."""
+    from urllib.parse import urlsplit, unquote
+    path = unquote(urlsplit(url).path)
+    base = path.rsplit("/", 1)[-1] if "/" in path else path
+    return _safe_name(base, "download")
+
+
+def download_url(client, url: str, out_dir: str | Path, *, name: str | None = None,
+                 max_mb: int = DEFAULT_MAX_MB) -> dict:
+    """Download ANY Procore file URL (a signed FAS 'download link' from any tool —
+    checklist attachments/photos, an attachment you already looked up, etc.) through
+    the authenticated session. This is the universal fix: these links need the
+    logged-in session cookie and a followed redirect; a bare fetch just gets the
+    redirect with no file. Give it the url (and optionally a filename)."""
+    if not isinstance(url, str) or not url.strip():
+        return {"out_dir": str(Path(out_dir).resolve()), "downloaded": 0, "failed": 1,
+                "errors": [{"error": "empty url"}]}
+    dest = _dedupe(Path(out_dir) / _safe_name(name or _name_from_url(url)))
+    res = _stream_download(client.s, url, dest, max_mb=max_mb)
+    return _manifest(Path(out_dir), [res], {"source": "url"})
+
+
+def download_inspection(client, project_id: int, company_id: int, list_id: int,
+                        out_dir: str | Path, *, label: str | None = None,
+                        max_mb: int = DEFAULT_MAX_MB) -> dict:
+    """Download the attachments on one inspection (checklist list) into
+    out_dir/<label>/. Pulls the inspection detail and downloads every file-level
+    attachment it carries. (Inspection-level attachments live here; for a photo or
+    attachment on a specific response, hand its download link to download_url.)"""
+    data = client.checklist_list(project_id, company_id, list_id)
+    atts = _harvest_attachments(data)
+    ident = data.get("identifier") or data.get("number") or list_id
+    label = label or f"inspection-{_safe_name(str(ident))}"
+    dest_dir = Path(out_dir) / _safe_name(label)
+    results = []
+    for a in atts:
+        dest = _dedupe(dest_dir / _safe_name(a["name"]))
+        results.append(_stream_download(client.s, a["url"], dest, max_mb=max_mb))
+    return _manifest(dest_dir, results,
+                     {"source": "inspection", "inspection_id": list_id,
+                      "name": data.get("list_template_name") or data.get("name"),
+                      "identifier": ident, "attachments_found": len(atts)})

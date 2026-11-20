@@ -828,6 +828,30 @@ def download_documents_cmd(company: str = CompanyOpt, project: str = ProjectOpt,
         print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
 
 
+@download_app.command("inspection")
+def download_inspection_cmd(list_id: int, company: str = CompanyOpt, project: str = ProjectOpt,
+                            out: str = DlOutOpt):
+    """Download the attachments on one inspection/checklist (by its list id) to a local folder."""
+    from procli.download import download_inspection
+    with _client() as c:
+        comp = _resolve_company(c, company)
+        p = _resolve_project(c, comp["id"], project)
+        m = download_inspection(c, p["id"], comp["id"], list_id, out)
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
+@download_app.command("url")
+def download_url_cmd(url: str, out: str = DlOutOpt,
+                     name: str = typer.Option(None, "--name", help="Filename to save as (optional).")):
+    """Download ANY Procore file link (a signed download URL from any tool — e.g. a
+    checklist attachment or photo you already looked up) through the logged-in session.
+    Use this when you have the link but a plain fetch just returns a redirect/no file."""
+    from procli.download import download_url
+    with _client() as c:
+        m = download_url(c, url, out, name=name)
+        print(json.dumps(m, default=str, indent=2, ensure_ascii=False))
+
+
 @download_app.command("file")
 def download_file_cmd(file_id: int, company: str = CompanyOpt, project: str = ProjectOpt,
                       out: str = DlOutOpt):

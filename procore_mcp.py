@@ -20,7 +20,7 @@ import sys, os, json, subprocess
 ROOT = os.path.dirname(os.path.abspath(__file__))   # procore-cli/ (contains procli/)
 PYEXE = sys.executable
 SERVER_NAME = "procore"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 
 
 def log(msg: str) -> None:
@@ -363,6 +363,35 @@ TOOLS = [
         ["file_id", "company", "project"],
         {"base": ["download", "file"], "pos": ["file_id"],
          "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("out", "--out", "val")]}),
+     "timeout_s": 600},
+
+    {**_t("download_inspection",
+        "Download the attachments on one inspection/checklist (by its list id, from the "
+        "inspections_list / surface roster) to local files, under out/<inspection-id>/. Returns a "
+        "JSON manifest with the absolute path of each file. NOTE: this covers inspection-level "
+        "attachments; for a photo or file on a specific checklist response, use download_url with "
+        "that file's download link.",
+        {"list_id": {**_INT, "description": "inspection (checklist list) id"},
+         "company": _COMPANY, "project": _PROJECT,
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"}},
+        ["list_id", "company", "project"],
+        {"base": ["download", "inspection"], "pos": ["list_id"],
+         "opt": [("company", "-c", "val"), ("project", "-p", "val"), ("out", "--out", "val")]}),
+     "timeout_s": 900},
+
+    {**_t("download_url",
+        "Download ANY Procore file by its download link, through the logged-in session. Use this "
+        "whenever you already have a file's signed download URL (a '/fas/' link) from any tool — a "
+        "checklist/inspection attachment or photo, an item-response attachment, anything — but a "
+        "plain web fetch of that link just returns a redirect with no file. These links require the "
+        "session cookie and a followed redirect, which this does. Returns a JSON manifest with the "
+        "absolute path. (No company/project needed — the saved session authorizes it.)",
+        {"url": {**_STR, "description": "the signed Procore file URL (contains '/fas/' and a sig=...)"},
+         "name": {**_STR, "description": "filename to save as (optional; inferred from the URL if omitted)"},
+         "out": {**_STR, "description": "output directory (optional; default downloads/)"}},
+        ["url"],
+        {"base": ["download", "url"], "pos": ["url"],
+         "opt": [("name", "--name", "val"), ("out", "--out", "val")]}),
      "timeout_s": 600},
 
     _t("raw", "Escape hatch: call any Procore internal REST endpoint. method e.g. GET, "

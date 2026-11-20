@@ -313,6 +313,14 @@ class ProcoreClient:
         resp.raise_for_status()
         return resp.json()
 
+    def checklist_list(self, project_id: int, company_id: int, list_id: int) -> dict:
+        """One inspection (checklist list) with its detail, INCLUDING the list-level
+        `attachments[]` (each carries a signed FAS download `url`). The item-level
+        `attachments`/`list_items` sweep does NOT carry these."""
+        return self.s.get_json(f"/rest/v1.0/projects/{project_id}/checklist/lists/{list_id}",
+                               company_id=company_id,
+                               params={"project_id": project_id, "company_id": company_id})
+
     def checklist_sections(self, project_id: int, company_id: int, list_id: int) -> list[dict]:
         return self.s.get_json(f"/rest/v1.1/projects/{project_id}/checklist/list_sections",
                                company_id=company_id, params={"filters[list_id]": list_id})
